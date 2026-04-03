@@ -81,9 +81,11 @@ class ColBERT(SentenceTransformer):
     embedding_size
         The output size of the projection layer. Default to 128.
     query_prefix
-        Prefix to add to the queries.
+        Prefix to add to the queries. If set to an existing token in the vocabulary (e.g. ``"[unused0]"``), that
+        token is reused directly and no new token is added, avoiding embedding reinitialization.
     document_prefix
-        Prefix to add to the documents.
+        Prefix to add to the documents. If set to an existing token in the vocabulary (e.g. ``"[unused1]"``), that
+        token is reused directly and no new token is added, avoiding embedding reinitialization.
     add_special_tokens
         Add the prefix to the inputs.
     truncation
@@ -378,15 +380,31 @@ class ColBERT(SentenceTransformer):
             else "[D] "
         )
 
-        # Try adding the prefixes to the tokenizer. We call resize_token_embeddings twice to ensure the tokens are added only if resize_token_embeddings works. There should be a better way to do this.
-        try:
-            self._first_module().auto_model.resize_token_embeddings(len(self.tokenizer))
-            self.tokenizer.add_tokens([self.query_prefix, self.document_prefix])
-            self._first_module().auto_model.resize_token_embeddings(len(self.tokenizer))
-        except NotImplementedError:
-            logger.warning(
-                "The tokenizer does not support resizing the token embeddings, the prefixes token have not been added to vocabulary."
+        # If the prefix tokens already exist in the vocabulary (e.g. [unused0], [unused1]),
+        # use them directly without adding new tokens or resizing the embedding layer.
+        # This preserves the original embeddings and avoids reinitialization.
+        vocab = self.tokenizer.get_vocab()
+        if self.query_prefix in vocab and self.document_prefix in vocab:
+            logger.info(
+                f"Prefix tokens '{self.query_prefix}' and '{self.document_prefix}' "
+                "already exist in the vocabulary, reusing them without resizing embeddings."
             )
+        else:
+            try:
+                self.tokenizer.add_tokens(
+                    [
+                        t
+                        for t in [self.query_prefix, self.document_prefix]
+                        if t not in vocab
+                    ]
+                )
+                self._first_module().auto_model.resize_token_embeddings(
+                    len(self.tokenizer)
+                )
+            except NotImplementedError:
+                logger.warning(
+                    "The tokenizer does not support resizing the token embeddings, the prefixes token have not been added to vocabulary."
+                )
 
         self.document_prefix_id = self.tokenizer.convert_tokens_to_ids(
             self.document_prefix
