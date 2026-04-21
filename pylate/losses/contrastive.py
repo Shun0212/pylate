@@ -11,6 +11,45 @@ from ..scores import colbert_scores
 from ..utils import all_gather, all_gather_with_gradients, get_rank, get_world_size
 
 
+def compute_query_length_denominator(
+    query_embeddings: torch.Tensor,
+    query_mask: torch.Tensor | None,
+    do_query_expansion: bool,
+) -> torch.Tensor | float:
+    """Compute the per-query denominator used to average the ColBERT MaxSim score.
+
+    The raw ColBERT score is a sum of per-query-token max-cosine-similarities, so it
+    grows with the query length. Dividing by the effective number of query tokens
+    brings the score back to ``[-1, 1]`` (mean MaxSim), which avoids overly sharp
+    softmax distributions and reduces the risk of gradient explosion during
+    contrastive training.
+
+    Parameters
+    ----------
+    query_embeddings
+        Query token embeddings of shape ``(batch_size, num_query_tokens, dim)``.
+    query_mask
+        Boolean/0-1 mask of shape ``(batch_size, num_query_tokens)``. Only used when
+        ``do_query_expansion`` is False (matches the scoring path which ignores the
+        mask under query expansion).
+    do_query_expansion
+        Whether query expansion is enabled on the model. When True, the scoring
+        path uses the full padded query width, so we normalize by the constant
+        ``num_query_tokens``.
+
+    Returns
+    -------
+    A scalar (when ``do_query_expansion`` is True) or a tensor of shape
+    ``(batch_size, 1)`` otherwise, broadcastable against a score tensor of shape
+    ``(batch_size, num_docs)``.
+    """
+    if do_query_expansion or query_mask is None:
+        return float(query_embeddings.shape[1])
+
+    lengths = query_mask.to(dtype=query_embeddings.dtype).sum(dim=-1, keepdim=True)
+    return lengths.clamp(min=1.0)
+
+
 def extract_skiplist_mask(
     sentence_features: Iterable[dict[str, torch.Tensor]],
     skiplist: list[int],
@@ -83,6 +122,16 @@ class Contrastive(nn.Module):
         Average by the size of the mini-batch.
     gather_across_devices
         Whether to gather the embeddings across devices to have more in batch negatives. We recommend making sure the sampling across GPUs use the same dataset in case of multi-dataset training to make sure the negatives are plausible.
+    temperature
+        Temperature used to scale the logits before the cross-entropy. Defaults to 1.0.
+    normalize_by_query_length
+        Whether to divide the ColBERT scores by the effective number of query tokens
+        before computing the cross-entropy. The raw ColBERT MaxSim score is a sum over
+        query tokens, so it scales with the query length and can make the softmax
+        overly sharp (and therefore gradients unstable). Enabling this option turns
+        the score into a mean MaxSim in ``[-1, 1]``. Defaults to False for backward
+        compatibility. Assumes the ``score_metric`` is a ColBERT-style sum-over-query
+        MaxSim score.
 
     Examples
     --------
@@ -120,6 +169,7 @@ class Contrastive(nn.Module):
         size_average: bool = True,
         gather_across_devices: bool = False,
         temperature: float = 1.0,
+        normalize_by_query_length: bool = False,
     ) -> None:
         super(Contrastive, self).__init__()
         self.score_metric = score_metric
@@ -127,6 +177,7 @@ class Contrastive(nn.Module):
         self.size_average = size_average
         self.gather_across_devices = gather_across_devices
         self.temperature = temperature
+        self.normalize_by_query_length = normalize_by_query_length
 
     def forward(
         self,
@@ -199,6 +250,14 @@ class Contrastive(nn.Module):
             ],
             dim=1,
         )
+
+        if self.normalize_by_query_length:
+            denom = compute_query_length_denominator(
+                query_embeddings=embeddings[0],
+                query_mask=masks[0],
+                do_query_expansion=do_query_expansion,
+            )
+            scores = scores / denom
 
         # compute constrastive loss using cross-entropy over the scores
         loss = F.cross_entropy(

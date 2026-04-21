@@ -14,7 +14,7 @@ from torch.utils.checkpoint import get_device_states, set_device_states
 from ..models import ColBERT
 from ..scores import colbert_scores
 from ..utils import all_gather, all_gather_with_gradients, get_rank, get_world_size
-from .contrastive import extract_skiplist_mask
+from .contrastive import compute_query_length_denominator, extract_skiplist_mask
 
 
 class RandContext:
@@ -95,6 +95,16 @@ class CachedContrastive(nn.Module):
         Whether to gather the embeddings across devices to have more in batch negatives. We recommend making sure the sampling across GPUs use the same dataset in case of multi-dataset training to make sure the negatives are plausible.
     show_progress_bar
         Whether to show a TQDM progress bar for the embedding steps.
+    temperature
+        Temperature used to scale the logits before the cross-entropy. Defaults to 1.0.
+    normalize_by_query_length
+        Whether to divide the ColBERT scores by the effective number of query tokens
+        before computing the cross-entropy. The raw ColBERT MaxSim score is a sum over
+        query tokens, so it scales with the query length and can make the softmax
+        overly sharp (and therefore gradients unstable). Enabling this option turns
+        the score into a mean MaxSim in ``[-1, 1]``. Defaults to False for backward
+        compatibility. Assumes the ``score_metric`` is a ColBERT-style sum-over-query
+        MaxSim score.
 
     Examples
     --------
@@ -133,6 +143,7 @@ class CachedContrastive(nn.Module):
         gather_across_devices: bool = False,
         show_progress_bar: bool = False,
         temperature: float = 1.0,
+        normalize_by_query_length: bool = False,
     ) -> None:
         super(CachedContrastive, self).__init__()
         self.model = model
@@ -142,6 +153,7 @@ class CachedContrastive(nn.Module):
         self.gather_across_devices = gather_across_devices
         self.show_progress_bar = show_progress_bar
         self.temperature = temperature
+        self.normalize_by_query_length = normalize_by_query_length
 
         # Will hold partial derivatives for each embedding chunk
         self.cache: list[list[Tensor]] | None = None
@@ -311,6 +323,13 @@ class CachedContrastive(nn.Module):
                 ],
                 dim=1,
             )
+            if self.normalize_by_query_length:
+                denom = compute_query_length_denominator(
+                    query_embeddings=embeddings_anchor[begin:end],
+                    query_mask=masks[0][begin:end],
+                    do_query_expansion=do_query_expansion,
+                )
+                scores = scores / denom
             # We don't want to average the loss across the mini-batch as mini-batch sizes can vary, which would create an issue similar to this one: https://huggingface.co/blog/gradient_accumulation#where-does-it-stem-from
             loss_mbatch = F.cross_entropy(
                 input=scores / self.temperature,
