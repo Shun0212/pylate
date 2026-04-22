@@ -5,6 +5,7 @@ import json
 import logging
 import os
 from contextlib import nullcontext
+from functools import partial
 from typing import TYPE_CHECKING
 
 import torch
@@ -22,6 +23,17 @@ class PyLateInformationRetrievalEvaluator(InformationRetrievalEvaluator):
     """
     This class evaluates an Information Retrieval (IR) setting. This is a direct extension of the InformationRetrievalEvaluator from the sentence-transformers library, only override the compute_metrices method to be compilatible with PyLate models (define asymmetric encoding using is_query params and add padding).
     """
+
+    def __init__(self, *args, top_k_score: int | None = None, **kwargs) -> None:
+        if top_k_score is not None and kwargs.get("score_functions") is None:
+            from ..scores import colbert_scores
+
+            label = f"MaxSim_top{top_k_score}"
+            kwargs["score_functions"] = {
+                label: partial(colbert_scores, top_k_score=top_k_score)
+            }
+        self.top_k_score = top_k_score
+        super().__init__(*args, **kwargs)
 
     def compute_metrices(
         self,

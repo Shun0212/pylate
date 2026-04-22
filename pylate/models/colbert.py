@@ -6,6 +6,7 @@ import logging
 import math
 import os
 import string
+from functools import partial
 from typing import Iterable, Literal, Optional
 
 import numpy as np
@@ -216,6 +217,7 @@ class ColBERT(SentenceTransformer):
         tokenizer_kwargs: dict | None = None,
         config_kwargs: dict | None = None,
         model_card_data: PylateModelCardData | None = None,
+        top_k_score: int | None = None,
     ) -> None:
         self.query_prefix = query_prefix
         self.document_prefix = document_prefix
@@ -224,6 +226,7 @@ class ColBERT(SentenceTransformer):
         self.do_query_expansion = do_query_expansion
         self.attend_to_expansion_tokens = attend_to_expansion_tokens
         self.skiplist_words = skiplist_words
+        self.top_k_score = top_k_score
         model_card_data = model_card_data or PylateModelCardData()
         if similarity_fn_name is None:
             similarity_fn_name = "MaxSim"
@@ -469,6 +472,18 @@ class ColBERT(SentenceTransformer):
         # If we do not do query expansion, we do not attend to the expansion tokens
         if not self.do_query_expansion:
             self.attend_to_expansion_tokens = False
+
+        # Explicit constructor argument wins over any value loaded from config.
+        if top_k_score is not None:
+            self.top_k_score = top_k_score
+
+        if self.top_k_score is not None:
+            from ..scores import colbert_scores, colbert_scores_pairwise
+
+            self._similarity = partial(colbert_scores, top_k_score=self.top_k_score)
+            self._similarity_pairwise = partial(
+                colbert_scores_pairwise, top_k_score=self.top_k_score
+            )
 
     @staticmethod
     def load(input_path) -> "ColBERT":
@@ -1183,6 +1198,8 @@ class ColBERT(SentenceTransformer):
             config["attend_to_expansion_tokens"] = self.attend_to_expansion_tokens
             config["skiplist_words"] = self.skiplist_words
             config["do_query_expansion"] = self.do_query_expansion
+            if self.top_k_score is not None:
+                config["top_k_score"] = self.top_k_score
             json.dump(config, fOut, indent=2)
 
     def _load_auto_model(
@@ -1336,6 +1353,8 @@ class ColBERT(SentenceTransformer):
                 self.skiplist_words = self._model_config["skiplist_words"]
             if "do_query_expansion" in self._model_config:
                 self.do_query_expansion = self._model_config["do_query_expansion"]
+            if "top_k_score" in self._model_config:
+                self.top_k_score = self._model_config["top_k_score"]
 
         return [
             module

@@ -44,6 +44,7 @@ def rerank(
     queries_embeddings: list[list[float | int] | np.ndarray | torch.Tensor],
     documents_embeddings: list[list[float | int] | np.ndarray | torch.Tensor],
     device: str = None,
+    top_k_score: int | None = None,
 ) -> list[list[RerankResult]]:
     """Rerank the documents based on the queries embeddings.
 
@@ -57,6 +58,8 @@ def rerank(
         The documents embeddings which is a dictionary of documents ids and their embeddings.
     device
         The device to use for the reranking. If None, the device of the queries embeddings will be used.
+    top_k_score
+        Number of highest MaxSim values to sum per query token. If None, all query tokens are used.
 
     Examples
     --------
@@ -140,6 +143,7 @@ def rerank(
         query_scores = colbert_scores(
             queries_embeddings=query_embeddings.unsqueeze(0),
             documents_embeddings=query_documents_embeddings,
+            top_k_score=top_k_score,
         )[0]
 
         scores, sorted_indices = torch.sort(input=query_scores, descending=True)

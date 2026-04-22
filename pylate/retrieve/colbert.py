@@ -105,6 +105,7 @@ class ColBERT:
         device: str | None = None,
         batch_size: int = 50,
         subset: list[list[str]] | list[str] | None = None,
+        top_k_score: int | None = None,
     ) -> list[list[RerankResult]]:
         """Retrieve documents for a list of queries.
 
@@ -127,10 +128,18 @@ class ColBERT:
             list of lists (different filter per query).
             Document IDs should match the IDs used when adding documents.
             Currently only supported with PLAID index.
+        top_k_score
+            Number of highest MaxSim values to sum per query token during reranking.
+            If None, all document tokens are used (standard ColBERT scoring).
+            Not supported with PLAID index.
 
         """
         # PLAID handles reranking internally and returns RerankResult directly
         if isinstance(self.index, PLAID):
+            if top_k_score is not None:
+                logger.warning(
+                    "top_k_score is not supported with the PLAID index and will be ignored."
+                )
             return self.index(
                 queries_embeddings=queries_embeddings,
                 k=k,
@@ -175,6 +184,7 @@ class ColBERT:
                     queries_embeddings=queries_embeddings_batch,
                     documents_embeddings=documents_embeddings,
                     device=device,
+                    top_k_score=top_k_score,
                 )
             )
         return [query_results[:k] for query_results in reranking_results]

@@ -95,6 +95,8 @@ class CachedContrastive(nn.Module):
         Whether to gather the embeddings across devices to have more in batch negatives. We recommend making sure the sampling across GPUs use the same dataset in case of multi-dataset training to make sure the negatives are plausible.
     show_progress_bar
         Whether to show a TQDM progress bar for the embedding steps.
+    top_k_score
+        If set, only the top-k MaxSim values (across query tokens) are summed when computing scores. When None, all query tokens are used.
 
     Examples
     --------
@@ -133,10 +135,15 @@ class CachedContrastive(nn.Module):
         gather_across_devices: bool = False,
         show_progress_bar: bool = False,
         temperature: float = 1.0,
+        top_k_score: int | None = None,
     ) -> None:
         super(CachedContrastive, self).__init__()
         self.model = model
-        self.score_metric = score_metric
+        self.score_metric = (
+            partial(score_metric, top_k_score=top_k_score)
+            if top_k_score is not None
+            else score_metric
+        )
         self.mini_batch_size = mini_batch_size
         self.size_average = size_average
         self.gather_across_devices = gather_across_devices

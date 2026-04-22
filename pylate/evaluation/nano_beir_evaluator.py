@@ -65,6 +65,10 @@ MAPPING_DATASET_NAME_TO_HUMAN_READABLE = {
 class NanoBEIREvaluator(NanoBEIREvaluatorST):
     """Evaluate the performance of a PyLate Model on the NanoBEIR collection.
 
+    top_k_score
+        If set, only the top-k MaxSim values per query token are summed during scoring.
+        Must match the top_k_score used during training for train-inference consistency.
+
 
     This is a direct extension of the NanoBEIREvaluator from the
     sentence-transformers library, leveraging the
@@ -98,6 +102,10 @@ class NanoBEIREvaluator(NanoBEIREvaluatorST):
 
     """
 
+    def __init__(self, *args, top_k_score: int | None = None, **kwargs) -> None:
+        self.top_k_score = top_k_score
+        super().__init__(*args, **kwargs)
+
     def _load_dataset(
         self, dataset_name: DatasetNameType, **ir_evaluator_kwargs
     ) -> PyLateInformationRetrievalEvaluator:
@@ -127,6 +135,8 @@ class NanoBEIREvaluator(NanoBEIREvaluatorST):
                 qrels_dict[sample["query-id"]] = set()
             qrels_dict[sample["query-id"]].add(sample["corpus-id"])
 
+        if self.top_k_score is not None:
+            ir_evaluator_kwargs["top_k_score"] = self.top_k_score
         if self.query_prompts is not None:
             ir_evaluator_kwargs["query_prompt"] = self.query_prompts.get(
                 dataset_name, None

@@ -11,6 +11,7 @@ def colbert_scores(
     documents_embeddings: list | np.ndarray | torch.Tensor,
     queries_mask: torch.Tensor | None = None,
     documents_mask: torch.Tensor | None = None,
+    top_k_score: int | None = None,
 ) -> torch.Tensor:
     """Computes the ColBERT scores between queries and documents embeddings. The score is computed as the sum of maximum similarities
     between the query and the document.
@@ -25,6 +26,8 @@ def colbert_scores(
         The mask for the queries embeddings. Shape: (batch_size, num tokens queries)
     documents_mask
         The mask for the documents embeddings. Shape: (batch_size, num tokens documents)
+    top_k_score
+        If set, only the top-k MaxSim values (across query tokens) are summed. When None, all query tokens are used.
 
     Examples
     --------
@@ -63,6 +66,19 @@ def colbert_scores(
             [  20.,  20., 2000.],
             [  0.,  0., 0.]])
 
+    With ``top_k_score=1``, only the single best MaxSim value per query is kept.
+    In the example below both query tokens are non-zero so the behaviour differs
+    from summing all tokens:
+
+    >>> q2 = torch.tensor([[[1.], [1.], [0.], [0.]]])
+    >>> d2 = torch.tensor([[[3.], [0.]], [[0.], [5.]]])
+
+    >>> colbert_scores(q2, d2)
+    tensor([[ 6., 10.]])
+
+    >>> colbert_scores(q2, d2, top_k_score=1)
+    tensor([[3., 5.]])
+
     """
     queries_embeddings = convert_to_tensor(queries_embeddings)
     documents_embeddings = convert_to_tensor(documents_embeddings)
@@ -80,13 +96,18 @@ def colbert_scores(
     if documents_mask is not None:
         documents_mask = convert_to_tensor(documents_mask)
         scores = scores * documents_mask.unsqueeze(0).unsqueeze(2)
-    scores = scores.max(axis=-1).values.sum(axis=-1)
-    return scores
+
+    maxsim = scores.max(axis=-1).values
+    if top_k_score is not None:
+        k = min(top_k_score, maxsim.size(-1))
+        maxsim = maxsim.topk(k, dim=-1).values
+    return maxsim.sum(axis=-1)
 
 
 def colbert_scores_pairwise(
     queries_embeddings: torch.Tensor,
     documents_embeddings: torch.Tensor,
+    top_k_score: int | None = None,
 ) -> torch.Tensor:
     """Computes the ColBERT score for each query-document pair. The score is computed as the sum of maximum similarities
     between the query and the document for corresponding pairs.
@@ -97,6 +118,8 @@ def colbert_scores_pairwise(
         The first tensor. The queries embeddings. Shape: (batch_size, num tokens queries, embedding_size)
     documents_embeddings
         The second tensor. The documents embeddings. Shape: (batch_size, num tokens documents, embedding_size)
+    top_k_score
+        If set, only the top-k MaxSim values (across query tokens) are summed. When None, all query tokens are used.
 
     Examples
     --------
@@ -137,7 +160,11 @@ def colbert_scores_pairwise(
             document_embedding,
         )
 
-        scores.append(query_document_score.max(axis=-1).values.sum())
+        maxsim = query_document_score.max(axis=-1).values
+        if top_k_score is not None:
+            k = min(top_k_score, maxsim.size(-1))
+            maxsim = maxsim.topk(k).values
+        scores.append(maxsim.sum())
 
     return torch.stack(scores, dim=0)
 
@@ -147,8 +174,22 @@ def colbert_kd_scores(
     documents_embeddings: list | np.ndarray | torch.Tensor,
     queries_mask: torch.Tensor = None,
     documents_mask: torch.Tensor = None,
+    top_k_score: int | None = None,
 ) -> torch.Tensor:
     """Computes the ColBERT scores between queries and documents embeddings. This scoring function is dedicated to the knowledge distillation pipeline.
+
+    Parameters
+    ----------
+    queries_embeddings
+        Shape: (batch_size, num tokens queries, embedding_size)
+    documents_embeddings
+        Shape: (batch_size, n_ways, num tokens documents, embedding_size)
+    queries_mask
+        Shape: (batch_size, num tokens queries)
+    documents_mask
+        Shape: (batch_size, n_ways, num tokens documents)
+    top_k_score
+        If set, only the top-k MaxSim values (across query tokens) are summed. When None, all query tokens are used.
 
     Examples
     --------
@@ -201,5 +242,8 @@ def colbert_kd_scores(
         mask = convert_to_tensor(documents_mask)
         scores = scores * mask.unsqueeze(2)
 
-    scores = scores.max(axis=-1).values.sum(axis=-1)
-    return scores
+    maxsim = scores.max(axis=-1).values
+    if top_k_score is not None:
+        k = min(top_k_score, maxsim.size(-1))
+        maxsim = maxsim.topk(k, dim=-1).values
+    return maxsim.sum(axis=-1)

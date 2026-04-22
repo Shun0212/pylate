@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from functools import partial
 from typing import Callable, Iterable
 
 import torch
@@ -20,6 +21,8 @@ class Distillation(torch.nn.Module):
         Function that returns a score between two sequences of embeddings.
     size_average
         Average by the size of the mini-batch or perform sum.
+    top_k_score
+        If set, only the top-k MaxSim values (across query tokens) are summed when computing scores. When None, all query tokens are used.
 
     Examples
     --------
@@ -57,9 +60,14 @@ class Distillation(torch.nn.Module):
         score_metric: Callable = colbert_kd_scores,
         size_average: bool = True,
         normalize_scores: bool = True,
+        top_k_score: int | None = None,
     ) -> None:
         super(Distillation, self).__init__()
-        self.score_metric = score_metric
+        self.score_metric = (
+            partial(score_metric, top_k_score=top_k_score)
+            if top_k_score is not None
+            else score_metric
+        )
         self.model = model
         self.loss_function = torch.nn.KLDivLoss(
             reduction="batchmean" if size_average else "sum", log_target=True

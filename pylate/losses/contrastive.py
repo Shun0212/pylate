@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from functools import partial
 from typing import Iterable
 
 import torch
@@ -83,6 +84,8 @@ class Contrastive(nn.Module):
         Average by the size of the mini-batch.
     gather_across_devices
         Whether to gather the embeddings across devices to have more in batch negatives. We recommend making sure the sampling across GPUs use the same dataset in case of multi-dataset training to make sure the negatives are plausible.
+    top_k_score
+        If set, only the top-k MaxSim values (across query tokens) are summed when computing scores. When None, all query tokens are used.
 
     Examples
     --------
@@ -120,9 +123,14 @@ class Contrastive(nn.Module):
         size_average: bool = True,
         gather_across_devices: bool = False,
         temperature: float = 1.0,
+        top_k_score: int | None = None,
     ) -> None:
         super(Contrastive, self).__init__()
-        self.score_metric = score_metric
+        self.score_metric = (
+            partial(score_metric, top_k_score=top_k_score)
+            if top_k_score is not None
+            else score_metric
+        )
         self.model = model
         self.size_average = size_average
         self.gather_across_devices = gather_across_devices

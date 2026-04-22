@@ -159,6 +159,7 @@ class ColBERTTripletEvaluator(TripletEvaluator):
         show_progress_bar: bool = False,
         write_csv: bool = True,
         truncate_dim: int | None = None,
+        top_k_score: int | None = None,
     ) -> None:
         super().__init__(
             anchors=anchors,
@@ -171,6 +172,7 @@ class ColBERTTripletEvaluator(TripletEvaluator):
             write_csv=write_csv,
             truncate_dim=truncate_dim,
         )
+        self.top_k_score = top_k_score
 
         self.csv_headers = [
             "epoch",
@@ -229,11 +231,13 @@ class ColBERTTripletEvaluator(TripletEvaluator):
         positive_scores = colbert_scores_pairwise(
             queries_embeddings=embeddings_anchors,
             documents_embeddings=embeddings_positives,
+            top_k_score=self.top_k_score,
         )
 
         negative_scores = colbert_scores_pairwise(
             queries_embeddings=embeddings_anchors,
             documents_embeddings=embeddings_negatives,
+            top_k_score=self.top_k_score,
         )
 
         metrics = {
